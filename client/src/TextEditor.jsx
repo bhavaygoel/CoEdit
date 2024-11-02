@@ -76,6 +76,8 @@ export default function TextEditor() {
         // Handler to apply received changes
         const receiveChangesHandler = (delta) => {
             quill.updateContents(delta);
+            lastSavedContent.current = quill.getContents();
+
         };
 
         // Handler to send changes made by the current user
