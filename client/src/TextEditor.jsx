@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { io } from "socket.io-client";
 import { useParams } from "react-router-dom";
 
-const SAVE_INTERVAL_MS = 2000
+const SAVE_DEBOUNCE_MS = 500;
 const TOOLBAR_OPTIONS = [
     [{ header: [1, 2, 3, 4, 5, 6, false] }],
     [{ font: [] }],
@@ -46,16 +46,25 @@ export default function TextEditor() {
 
     useEffect(() => {
         if (socket == null || quill == null) return;
-
-        const interval = setInterval(() => {
-            socket.emit("save-document", quill.getContents())
-          }, SAVE_INTERVAL_MS)
-
+    
+        let timeoutId;
+    
+        const saveDocument = (content) => {
+            socket.emit("save-document", content);
+        };
+    
+        quill.on("text-change", () => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+                saveDocument(quill.getContents());
+            }, SAVE_DEBOUNCE_MS);
+        });
+    
         return () => {
-            clearInterval(interval);
-        }
-
-    }, [socket,quill])
+            clearTimeout(timeoutId);
+            quill.off("text-change");
+        };
+    }, [socket, quill]);
 
     useEffect(() => {
         if (socket == null || quill == null) return;
