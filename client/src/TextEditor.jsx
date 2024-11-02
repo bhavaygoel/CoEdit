@@ -37,7 +37,7 @@ export default function TextEditor() {
     }, [])
 
     useEffect(() => {
-        const s = io("http://localhost:3001");
+        const s = io("https://coedit-m9zq.onrender.com");
         setSocket(s);
         return () => {
             s.disconnect();
@@ -54,7 +54,7 @@ export default function TextEditor() {
         return () => {
             clearInterval(interval);
         }
-        
+
     }, [socket,quill])
 
     useEffect(() => {
