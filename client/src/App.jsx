@@ -6,6 +6,7 @@ import {
   Navigate
 } from "react-router-dom"
 import { v4 as uuidV4 } from "uuid"
+import LandingPage from "./LandingPage"
 
 function App() {
   return (
@@ -13,7 +14,7 @@ function App() {
       <Routes>
         <Route 
           path="/" 
-          element={<Navigate to={`/documents/${uuidV4()}`} replace />} 
+          element={<LandingPage />} 
         />
         <Route 
           path="/documents/:id" 

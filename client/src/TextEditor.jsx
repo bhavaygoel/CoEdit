@@ -2,7 +2,7 @@ import Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { useCallback, useEffect, useState } from "react";
 import { io } from "socket.io-client";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 
 const SAVE_DEBOUNCE_MS = 500;
 const TOOLBAR_OPTIONS = [
@@ -19,8 +19,11 @@ const TOOLBAR_OPTIONS = [
 
 export default function TextEditor() {
     const { id: documentId } = useParams();
+    const location = useLocation();
     const [socket, setSocket] = useState();
     const [quill, setQuill] = useState();
+    const [users, setUsers] = useState([]);
+    const username = location.state?.name || "Anonymous";
 
     const wrapperRef = useCallback((wrapper) => {
         if (wrapper == null) return;
@@ -28,86 +31,90 @@ export default function TextEditor() {
         const editor = document.createElement("div");
         wrapper.append(editor);
         const q = new Quill(editor, {
-          theme: "snow",
-          modules: { toolbar: TOOLBAR_OPTIONS },
+            theme: "snow",
+            modules: { toolbar: TOOLBAR_OPTIONS },
         });
         q.disable();
         q.setText("Loading...");
         setQuill(q);
-    }, [])
+    }, []);
 
     useEffect(() => {
-        const s = io("https://coedit-m9zq.onrender.com");
+        const s = io("http://localhost:3001");
         setSocket(s);
+
         return () => {
             s.disconnect();
-        }
+        };
     }, []);
 
     useEffect(() => {
         if (socket == null || quill == null) return;
-    
-        let timeoutId;
-    
-        const saveDocument = (content) => {
-            socket.emit("save-document", content);
-        };
-    
-        quill.on("text-change", () => {
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => {
-                saveDocument(quill.getContents());
-            }, SAVE_DEBOUNCE_MS);
-        });
-    
-        return () => {
-            clearTimeout(timeoutId);
-            quill.off("text-change");
-        };
-    }, [socket, quill]);
 
-    useEffect(() => {
-        if (socket == null || quill == null) return;
+        // Handler to update user list
+        const updateUserListHandler = (users) => {
+            setUsers(users);
+        };
 
-        socket.once("load-document", (document) => {
+        // Handler to receive document content and enable editing
+        const loadDocumentHandler = (document) => {
             quill.setContents(document);
             quill.enable();
-        });
+        };
 
-        socket.emit("get-document", documentId);
-    }, [socket, quill, documentId]);    
+        // Handler to apply received changes
+        const receiveChangesHandler = (delta) => {
+            quill.updateContents(delta);
+        };
 
-    useEffect(() => {
-        if (socket == null || quill == null) return;
-
-        const handler = (delta, oldDelta, source) => {
+        // Handler to send changes made by the current user
+        const textChangeHandler = (delta, oldDelta, source) => {
             if (source !== "user") return;
             socket.emit("send-changes", delta);
-        }
+        };
 
-        quill.on("text-change", handler);
+        // Save document content with debounce
+        let timeoutId;
+        const saveDocument = () => {
+            socket.emit("save-document", quill.getContents());
+        };
 
+        const debouncedSaveHandler = () => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(saveDocument, SAVE_DEBOUNCE_MS);
+        };
+
+        // Set up listeners
+        socket.emit("get-document", { documentId, username });
+        socket.once("load-document", loadDocumentHandler);
+        socket.on("update-user-list", updateUserListHandler);
+        socket.on("receive-changes", receiveChangesHandler);
+        quill.on("text-change", textChangeHandler);
+        quill.on("text-change", debouncedSaveHandler);
+
+        // Clean up listeners on unmount
         return () => {
-            quill.off("text-change", handler);
-        }
-    }, [socket, quill]);
+            clearTimeout(timeoutId);
+            socket.off("update-user-list", updateUserListHandler);
+            socket.off("receive-changes", receiveChangesHandler);
+            quill.off("text-change", textChangeHandler);
+            quill.off("text-change", debouncedSaveHandler);
+        };
+    }, [socket, quill, documentId, username]);
 
-    useEffect(() => {
-        if (socket == null || quill == null) return;
-
-        const handler = (delta) => {
-            quill.updateContents(delta);
-        }
-
-        socket.on("receive-changes", handler);
-
-        return () => {
-            socket.off("receive-changes", handler);
-        }
-    }, [socket, quill]);
-    
-  return (
-    <div className="container" ref={wrapperRef}>
-    </div>
-  )
+    return (
+        <div className="parent">
+            <div className="editor-sidebar">
+                <h3>Users Online</h3>
+                <ul>
+                    {users.map((name, index) => (
+                        <li key={index}>{name}</li>
+                    ))}
+                </ul>
+            </div>
+            <div className="editor-container">
+                <div className="container" ref={wrapperRef}></div>
+            </div>
+        </div>
+    );
 }
