@@ -3,19 +3,15 @@ const Document = require('./Document');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 3001;
-const connectedUsers = {}; // Track connected users by document ID
+const connectedUsers = {};
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-}).then(() => {
+mongoose.connect(process.env.MONGO_URI)
+.then(() => {
     console.log("Connected to MongoDB");
 }).catch((error) => {
     console.error("Error connecting to MongoDB:", error);
 });
 
-// Initialize Socket.io Server
 const io = require('socket.io')(PORT, {
     cors: {
         origin: "*", // Allow any origin
@@ -24,36 +20,41 @@ const io = require('socket.io')(PORT, {
 });
 
 io.on('connection', (socket) => {
-    console.log("New client connected:", socket.id);
 
-    // Handle document joining
     socket.on('get-document', async ({ documentId, username }) => {
         socket.join(documentId);
 
-        // Update and broadcast the user list
         handleUserConnection(socket, documentId, username);
         
-        // Load document data and send to the client
         const document = await findOrCreateDocument(documentId);
-        socket.emit('load-document', document.data);
 
-        // Setup listeners for document editing and saving
+        socket.emit('load-document', document.data);
+        socket.emit('update-versions', document.versions);
+
         setupDocumentListeners(socket, documentId);
     });
 
-    // Handle client disconnect
+    socket.on('save-version', async ({ documentId, data, author }) => {
+        await saveVersion(documentId, data, author);
+    });
+
+    socket.on("restore-version", ({ documentId, data }) => {
+        io.to(documentId).emit("receive-restored-version", data);
+
+        // Save the restored version
+        Document.findByIdAndUpdate(documentId, { data: data });
+    });
+
     socket.on('disconnect', () => {
         handleUserDisconnection(socket);
     });
 });
 
-// Function to handle user connection and update the user list
 function handleUserConnection(socket, documentId, username) {
     if (!connectedUsers[documentId]) {
         connectedUsers[documentId] = {};
     }
 
-    // Avoid duplicate entries for the same user in the same document
     const isUserAlreadyConnected = Object.values(connectedUsers[documentId]).includes(username);
     if (!isUserAlreadyConnected) {
         connectedUsers[documentId][socket.id] = username;
@@ -67,10 +68,8 @@ function handleUserDisconnection(socket) {
         if (connectedUsers[documentId][socket.id]) {
             delete connectedUsers[documentId][socket.id];
 
-            // Update the user list in the document room
             io.to(documentId).emit('update-user-list', Object.values(connectedUsers[documentId]));
 
-            // If no users left in the document room, remove the entry
             if (Object.keys(connectedUsers[documentId]).length === 0) {
                 delete connectedUsers[documentId];
             }
@@ -79,7 +78,6 @@ function handleUserDisconnection(socket) {
     }
 }
 
-// Function to set up listeners for document changes and saving
 function setupDocumentListeners(socket, documentId) {
     socket.on('send-changes', (delta) => {
         socket.broadcast.to(documentId).emit('receive-changes', delta);
@@ -104,5 +102,29 @@ async function findOrCreateDocument(id) {
     } catch (error) {
         console.error("Error finding or creating document:", error);
         throw error;
+    }
+}
+
+async function saveVersion(documentId, newData, author) {
+    try {
+        const document = await Document.findById(documentId);
+        if (!document) throw new Error('Document not found');
+        if(JSON.stringify(document.versions[document.versions.length - 1].data) === JSON.stringify(newData)) {
+            console.log("this is same data");
+            return;
+        }
+        const newVersion = { data: newData, author, timestamp: new Date() };
+        document.versions.push(newVersion);
+
+        // Limit the versions to the last 10
+        if (document.versions.length > 10) {
+            document.versions.shift(); // Remove the oldest version
+        }
+
+        await document.save();
+        io.to(documentId).emit('update-versions', document.versions);
+
+    } catch (error) {
+        console.error('Error saving version:', error);
     }
 }
