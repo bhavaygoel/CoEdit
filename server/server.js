@@ -107,9 +107,10 @@ async function findOrCreateDocument(id) {
 
 async function saveVersion(documentId, newData, author) {
     try {
+        console.log("saving version");
         const document = await Document.findById(documentId);
         if (!document) throw new Error('Document not found');
-        if(JSON.stringify(document.versions[document.versions.length - 1].data) === JSON.stringify(newData)) {
+        if(document.versions.length > 0 &&  JSON.stringify(document.versions[document.versions.length - 1].data) === JSON.stringify(newData)) {
             console.log("this is same data");
             return;
         }

@@ -5,7 +5,7 @@ import { io } from "socket.io-client";
 import { useLocation, useParams } from "react-router-dom";
 import Modal from "./Modal";
 
-const VERSION_SAVE_INTERVAL_MS = 1 * 60 * 1000; // 1 minute
+const VERSION_SAVE_INTERVAL_MS = 1 * 30 * 1000; // 1 minute
 const SAVE_DEBOUNCE_MS = 500;
 const TOOLBAR_OPTIONS = [
     [{ header: [1, 2, 3, 4, 5, 6, false] }],
