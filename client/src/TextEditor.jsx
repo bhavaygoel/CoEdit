@@ -5,7 +5,8 @@ import { io } from "socket.io-client";
 import { useLocation, useParams } from "react-router-dom";
 import Modal from "./Modal";
 
-const VERSION_SAVE_INTERVAL_MS = 1 * 30 * 1000; // 1 minute
+const Delta = Quill.import("delta");
+
 const SAVE_DEBOUNCE_MS = 500;
 const TOOLBAR_OPTIONS = [
     [{ header: [1, 2, 3, 4, 5, 6, false] }],
@@ -30,6 +31,11 @@ export default function TextEditor() {
     const username = location.state?.name || "Anonymous";
 
     const lastSavedContent = useRef(null);
+
+    const serverRevision = useRef(0);
+    const pendingOps = useRef([]);
+    const pendingSend = useRef(null);
+    const awaitingAck = useRef(false);
 
     const wrapperRef = useCallback((wrapper) => {
         if (wrapper == null) return;
@@ -60,76 +66,132 @@ export default function TextEditor() {
     useEffect(() => {
         if (socket == null || quill == null) return;
 
-        // Handler to update the user list
+        // --- Helpers to flush the pending send buffer ---
+        const flushPending = () => {
+            if (pendingSend.current && !awaitingAck.current) {
+                const delta = pendingSend.current;
+                pendingSend.current = null;
+                awaitingAck.current = true;
+                pendingOps.current.push(delta);
+                socket.emit("send-changes", {
+                    revision: serverRevision.current,
+                    delta,
+                    author: username,
+                });
+            }
+        };
+
+        // --- Handler: document loaded from server ---
+        const loadDocumentHandler = ({ data, revision }) => {
+            quill.setContents(data);
+            quill.enable();
+            serverRevision.current = revision;
+            pendingOps.current = [];
+            pendingSend.current = null;
+            awaitingAck.current = false;
+            lastSavedContent.current = quill.getContents();
+        };
+
+        // --- Handler: user list updates ---
         const updateUserListHandler = (users) => {
             setUsers(users);
         };
 
-        // Handler to receive document content and enable editing
-        const loadDocumentHandler = (document) => {
-            quill.setContents(document);
-            quill.enable();
+        // --- Handler: ACK from server (our op was accepted) ---
+        const ackHandler = ({ revision }) => {
+            serverRevision.current = revision;
+            // Remove the oldest pending op (the one that was just ACK'd)
+            pendingOps.current.shift();
+            awaitingAck.current = false;
+            // If there are buffered ops to send, flush them
+            flushPending();
+        };
 
+        // --- Handler: receive a remote operation ---
+        const receiveChangesHandler = ({ delta, revision }) => {
+            // Transform all pending (unacknowledged) ops against the incoming remote op
+            let incomingDelta = new Delta(delta);
+
+            const transformedPending = [];
+            for (const pendingOp of pendingOps.current) {
+                const pending = new Delta(pendingOp);
+                // Transform the incoming delta against our pending op
+                // priority=false → our pending op wins (it was sent first from our perspective)
+                const newIncoming = pending.transform(incomingDelta, false);
+                // Transform our pending op against the incoming
+                // priority=true → the incoming (already applied on server) has priority
+                const newPending = incomingDelta.transform(pending, true);
+                incomingDelta = newIncoming;
+                transformedPending.push(newPending);
+            }
+            pendingOps.current = transformedPending;
+
+            // Also transform the unsent buffer if any
+            if (pendingSend.current) {
+                const unsent = new Delta(pendingSend.current);
+                const newIncoming = unsent.transform(incomingDelta, false);
+                pendingSend.current = incomingDelta.transform(unsent, true);
+                incomingDelta = newIncoming;
+            }
+
+            // Apply the (possibly transformed) incoming delta to the editor
+            quill.updateContents(incomingDelta);
+            serverRevision.current = revision;
             lastSavedContent.current = quill.getContents();
         };
 
-        // Handler to apply received changes
-        const receiveChangesHandler = (delta) => {
-            quill.updateContents(delta);
-            lastSavedContent.current = quill.getContents();
-
-        };
-
-        // Handler to send changes made by the current user
+        // --- Handler: local text change ---
         const textChangeHandler = (delta, oldDelta, source) => {
             if (source !== "user") return;
-            socket.emit("send-changes", delta);
+
+            if (!awaitingAck.current) {
+                // Nothing in flight — send immediately
+                awaitingAck.current = true;
+                pendingOps.current.push(delta);
+                socket.emit("send-changes", {
+                    revision: serverRevision.current,
+                    delta,
+                    author: username,
+                });
+            } else {
+                // We're waiting for an ACK — buffer the op
+                if (pendingSend.current) {
+                    // Compose with existing buffer
+                    pendingSend.current = new Delta(pendingSend.current).compose(delta);
+                } else {
+                    pendingSend.current = delta;
+                }
+            }
         };
 
-        // Save document content with debounce
+        // --- Auto-save debounce ---
         let timeoutId;
         const saveDocument = () => {
             socket.emit("save-document", quill.getContents());
         };
-
         const debouncedSaveHandler = () => {
             clearTimeout(timeoutId);
             timeoutId = setTimeout(saveDocument, SAVE_DEBOUNCE_MS);
         };
 
-
-        
-        // Handler to update versions when a new version is saved
+        // --- Version updates ---
         const updateVersionHandler = (updatedVersions) => {
             setVersions(updatedVersions);
         };
 
-
-        const saveVersionInterval = setInterval(() => {
-            const currentContent = quill.getContents();
-            const lengthDifference = Math.abs(currentContent.length() - lastSavedContent.current.length());
-
-            if (lengthDifference >= 10 || JSON.stringify(currentContent) !== JSON.stringify(lastSavedContent.current)) {
-                // Save the document version
-                socket.emit("save-version", { documentId, data: currentContent, author: username });
-                
-                lastSavedContent.current = currentContent;
-            }
-        }, VERSION_SAVE_INTERVAL_MS);
-
-        const handleRestoredVersion = (data) => {
-            console.log("Restoring version", data);
-            quill.setContents(data);
-            lastSavedContent.current = quill.getContents();
+        // --- OT error handler ---
+        const otErrorHandler = ({ message }) => {
+            console.error("OT Error:", message);
         };
 
         // Set up listeners
         socket.emit("get-document", { documentId, username });
         socket.once("load-document", loadDocumentHandler);
         socket.on("update-user-list", updateUserListHandler);
+        socket.on("ack", ackHandler);
         socket.on("receive-changes", receiveChangesHandler);
         socket.on("update-versions", updateVersionHandler);
-        socket.on("receive-restored-version", handleRestoredVersion);
+        socket.on("ot-error", otErrorHandler);
 
         quill.on("text-change", textChangeHandler);
         quill.on("text-change", debouncedSaveHandler);
@@ -137,13 +199,13 @@ export default function TextEditor() {
         // Clean up listeners on unmount
         return () => {
             clearTimeout(timeoutId);
-            clearInterval(saveVersionInterval);
             socket.off("update-user-list", updateUserListHandler);
+            socket.off("ack", ackHandler);
             socket.off("receive-changes", receiveChangesHandler);
             socket.off("update-versions", updateVersionHandler);
+            socket.off("ot-error", otErrorHandler);
             quill.off("text-change", textChangeHandler);
             quill.off("text-change", debouncedSaveHandler);
-            socket.off("receive-restored-version", handleRestoredVersion);
         };
     }, [socket, quill, documentId, username]);
 

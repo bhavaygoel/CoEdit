@@ -9,6 +9,7 @@ const Version = new Schema({
 const Document = new Schema({
     _id: String,
     data: Object,
+    revision: { type: Number, default: 0 },
     versions: {
         type: [Version],
         default: []

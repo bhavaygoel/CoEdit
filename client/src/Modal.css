@@ -1,35 +1,62 @@
 .modal-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    top: 0; left: 0; right: 0; bottom: 0;
     background-color: rgba(0, 0, 0, 0.5);
     display: flex;
     justify-content: center;
     align-items: center;
-    z-index: 1000; /* Make sure this is high enough to be above the toolbar */
+    z-index: 1000;
 }
 
-.modal-content {
+.modal-content.split-view {
     background: white;
     padding: 20px;
-    border-radius: 5px;
-    width: 500px;
-    max-height: 80vh;
-    overflow-y: auto;
+    border-radius: 8px;
+    width: 900px;
+    height: 80vh;
+    display: flex;
     position: relative;
-    z-index: 1001; /* Higher than overlay for inner content */
+    z-index: 1001;
+    gap: 20px;
+}
+
+.modal-left {
+    flex: 1;
+    border-right: 1px solid #eee;
+    padding-right: 15px;
+    overflow-y: auto;
+}
+
+.modal-right {
+    flex: 2;
+    display: flex;
+    flex-direction: column;
+}
+
+.preview-container {
+    flex-grow: 1;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    background-color: #f9f9f9;
+}
+
+.preview-container .ql-container {
+    border: none !important;
 }
 
 .close-button {
     position: absolute;
-    top: 10px;
-    right: 10px;
-    background: transparent;
+    top: 15px;
+    right: 15px;
+    background: #f1f1f1;
     border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
     font-size: 16px;
     cursor: pointer;
+    z-index: 1002;
 }
 
 .version-list {
@@ -42,19 +69,78 @@
     padding: 10px;
     border: 1px solid #ddd;
     border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.version-list li:hover {
+    background-color: #f5f5f5;
+}
+
+.version-list li.selected {
+    border-color: #007bff;
+    background-color: #eaf4ff;
 }
 
 .restore-button {
     background-color: #007bff;
     color: white;
     border: none;
-    padding: 5px 10px;
-    margin-top: 5px;
+    padding: 10px 15px;
     cursor: pointer;
-    border-radius: 3px;
+    border-radius: 4px;
+    font-size: 16px;
+    align-self: flex-end;
 }
 
-/* Explicitly set a lower z-index for the Quill toolbar */
+.preview-placeholder {
+    color: #888;
+    text-align: center;
+    margin-top: 50px;
+}
+
 .ql-toolbar {
-    z-index: 1; /* Lower value so it doesn't overlap the modal */
+    z-index: 1; 
+}
+
+/* =========================================
+   Mobile Responsiveness
+========================================= */
+@media (max-width: 768px) {
+    .modal-content.split-view {
+        width: 95vw;
+        height: 90vh;
+        flex-direction: column;
+        padding: 15px;
+        gap: 10px;
+        overflow: hidden; /* Contains the internal scrollers */
+    }
+
+    .modal-left {
+        flex: 1; /* Take up half the modal vertical space */
+        border-right: none;
+        border-bottom: 1px solid #eee;
+        padding-right: 0;
+        padding-bottom: 10px;
+    }
+
+    .modal-right {
+        flex: 1.5; /* Preview gets slightly more vertical space */
+    }
+
+    .preview-container {
+        margin-bottom: 10px;
+    }
+
+    .restore-button {
+        width: 100%;
+        text-align: center;
+        font-size: 1rem;
+        padding: 12px;
+    }
+
+    .close-button {
+        top: 10px;
+        right: 10px;
+    }
 }
